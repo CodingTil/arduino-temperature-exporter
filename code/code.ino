@@ -1,3 +1,4 @@
+
 #include <SPI.h>
 #include <Ethernet.h>
 #include <DHT.h>
@@ -10,91 +11,81 @@
 DHT dht(DHTPIN, DHTTYPE);
 
 // ---------------------
-// NETWORK CONFIG
+// NETWORK CONFIG (DHCP)
 // ---------------------
 byte mac[] = { 0xA8, 0x61, 0x0A, 0xAE, 0x7A, 0x27 };
 
-// Pushgateway hostname and port
-const char* pushgatewayHost = "192.168.178.52";
-const int pushgatewayPort = 9091;
-
-// Pushgateway job URL
-const char* pushPath = "/metrics/job/arduino-temperature";
-
-EthernetClient client;
+// HTTP server port (Prometheus will scrape this)
+EthernetServer server(9100);
 
 void setup() {
   Serial.begin(9600);
   delay(1000);
 
-  Serial.println("Starting Ethernet...");
-
-  // DHCP
+  Serial.println("Starting Ethernet (DHCP)...");
   if (Ethernet.begin(mac) == 0) {
-    Serial.println("DHCP failed. Check your network.");
-    while (true) { delay(1000); } // halt
+    Serial.println("DHCP failed. Check cable or router.");
+    while (1) delay(1000);
   }
 
-  delay(1000);
   Serial.print("My IP: ");
   Serial.println(Ethernet.localIP());
 
   dht.begin();
+  server.begin();
+  Serial.println("Exporter running on port 9100");
 }
 
 void loop() {
-  float temp = dht.readTemperature();
-  float hum  = dht.readHumidity();
+  EthernetClient client = server.available();
+  if (!client) return;
 
-  if (isnan(temp) || isnan(hum)) {
-    Serial.println("Failed to read from DHT11");
-    delay(10000);
-    return;
+  // wait for data
+  while (client.connected() && !client.available()) {
+    delay(1);
   }
 
-  // Prepare metrics in Prometheus text format
-  String body = "";
-  body += "arduino_temperature_celsius ";
-  body += String(temp, 2);
-  body += "\n";
+  String req = client.readStringUntil('\r');
+  client.read(); // read '\n'
 
-  body += "arduino_humidity_percent ";
-  body += String(hum, 2);
-  body += "\n";
+  // Only react to GET /metrics
+  if (req.startsWith("GET /metrics")) {
+    float temp = dht.readTemperature();
+    float hum  = dht.readHumidity();
 
-  Serial.println("Connecting to Pushgateway...");
+    // Handle DHT failure
+    if (isnan(temp) || isnan(hum)) {
+      temp = -1;
+      hum  = -1;
+    }
 
-  if (client.connect(pushgatewayHost, pushgatewayPort)) {
-    Serial.println("Connected, sending POST");
+    // Build metrics
+    String body;
+    body += "arduino_temperature_celsius ";
+    body += String(temp, 2);
+    body += "\n";
 
-    client.print("POST ");
-    client.print(pushPath);
-    client.println(" HTTP/1.1");
+    body += "arduino_humidity_percent ";
+    body += String(hum, 2);
+    body += "\n";
 
-    client.print("Host: ");
-    client.println(pushgatewayHost);
-
-    client.println("Content-Type: text/plain");
+    // Send HTTP 200 + metrics
+    client.println("HTTP/1.1 200 OK");
+    client.println("Content-Type: text/plain; version=0.0.4");
     client.print("Content-Length: ");
     client.println(body.length());
-
     client.println();
     client.print(body);
 
-    Serial.println("Data sent:");
+    Serial.println("Served /metrics:");
     Serial.println(body);
   } else {
-    Serial.println("Connection failed");
+    // Respond 404 to anything else
+    client.println("HTTP/1.1 404 Not Found");
+    client.println("Content-Length: 0");
+    client.println();
   }
 
-  // Read and print HTTP response
-  delay(2000); // wait a bit for response
-  while (client.available()) {
-    char c = client.read();
-    Serial.print(c);
-  }
+  delay(1);
   client.stop();
-
-  // Send every 30 seconds
-  delay(30 * 1000);
 }

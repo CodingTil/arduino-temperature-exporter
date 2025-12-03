@@ -1,5 +1,5 @@
-# Arduino Temperature Logger
-Records temperature measurements from the DHT11 sensor and forwards them to Prometheus.
+# Arduino Temperature Exporter
+Records temperature measurements from the DHT11 sensor and exports them to Prometheus.
 
 ## Getting Started
 Install the `arduino-cli`, along with the dependencies:
@@ -35,12 +35,10 @@ arduino-cli monitor -p /dev/ttyACM0 -c 9600
 ```
 
 # Requirements for Prometheus
-Setup a [pushgateway](https://github.com/prometheus/pushgateway). In `code/code.ino` adapt the `pushgatewayHost` variable.
-
-Add the pushgateway to the scrapeconfig of Prometheus (e.g., in `/etc/prometheus/prometheus.yml`):
+Add the Arduino to the scrapeconfig of Prometheus (e.g., in `/etc/prometheus/prometheus.yml`):
 ```yaml
 scrape_configs:
-  - job_name: "pushgateway"
+  - job_name: "arduino"
     static_configs:
-      - targets: ["localhost:9091"] # Adapt if necessary
+      - targets: ["<ip>:9100"]
 ```
